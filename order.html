@@ -407,5 +407,63 @@ active=null;
 el("addItem").onclick=addToBasket;
 loadMenu();
 </script>
+  
+<style>
+#floatingBasket {
+  position: fixed;
+  bottom: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 15;
+  background: #167343;
+  color: white;
+  border: 2px solid white;
+  border-radius: 12px;
+  padding: 15px;
+  box-shadow: 0 5px 20px #0004;
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 800;
+  cursor: pointer;
+}
+body { padding-bottom: 85px; }
+</style>
+
+<button id="floatingBasket" type="button">
+  <span id="floatingBasketCount">View basket</span>
+  <span id="floatingBasketTotal">£0.00</span>
+</button>
+
+<script>
+(function () {
+  const button = document.getElementById("floatingBasket");
+  const count = document.getElementById("floatingBasketCount");
+  const total = document.getElementById("floatingBasketTotal");
+
+  button.addEventListener("click", function () {
+    document.getElementById("basket")
+      .scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  function update() {
+    const basketCount = document.getElementById("basketCount").textContent;
+    const basketTotal = document.getElementById("total").textContent;
+
+    button.style.display = basketCount === "(0)" ? "none" : "flex";
+    count.textContent = "🛒 View basket " + basketCount;
+    total.textContent = basketTotal;
+  }
+
+  const observer = new MutationObserver(update);
+  observer.observe(document.getElementById("basketCount"), {
+    childList: true,
+    characterData: true,
+    subtree: true
+  });
+  update();
+})();
+</script>
+
 </body>
 </html>
