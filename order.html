@@ -464,6 +464,243 @@ body { padding-bottom: 85px; }
   update();
 })();
 </script>
+  
+<script>
+/* Chunks Steak Box — pizza toppings and sauce rules */
+(function () {
+  const STANDARD_TOPPINGS = [
+    "Tomatoes", "Mixed peppers", "Sweetcorn",
+    "Red onion", "Pepperoni", "Chicken tikka",
+    "Keema", "Donner", "Jalapeño",
+    "Pineapple", "Olive", "Green chilli", "Mushrooms"
+  ];
+
+  const STEAK_TOPPINGS = ["Chicken steak", "Beef steak"];
+
+  const originalOpenEditor = openEditor;
+  const originalAddToBasket = addToBasket;
+  const originalRenderBasket = renderBasket;
+
+  function heading(text) {
+    const h = document.createElement("h3");
+    h.textContent = text;
+    return h;
+  }
+
+  function toppingGroup(names, price, target) {
+    const group = document.createElement("div");
+    group.className = "options";
+
+    names.forEach(name => {
+      const label = document.createElement("label");
+      label.className = "check";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+
+      label.append(
+        checkbox,
+        document.createTextNode(
+          name + (price ? " (+£" + (price / 100).toFixed(2) + ")" : "")
+        )
+      );
+
+      group.append(label);
+      target.push({ name, price, input: checkbox });
+    });
+
+    return group;
+  }
+
+  function removeSauceControls(fields, controls, isPizza) {
+    const labels = Array.from(fields.children);
+    const sauceLabel = labels.find(node =>
+      node.tagName === "LABEL" &&
+      node.textContent.includes("Sauces (select")
+    );
+
+    if (!sauceLabel) return;
+
+    const sauceGrid = sauceLabel.nextElementSibling;
+    const servingLabel = Array.from(fields.children).find(node =>
+      node.tagName === "LABEL" &&
+      node.textContent === "Sauce serving"
+    );
+    const servingSelect = servingLabel?.nextElementSibling;
+
+    if (isPizza) {
+      // Keep sauce checkboxes but force separate pots.
+      if (controls.placement) controls.placement.value = "separate";
+      servingLabel?.remove();
+      servingSelect?.remove();
+
+      const note = document.createElement("p");
+      note.textContent = "All pizza sauces are served in separate pots.";
+      note.style.fontSize = ".9rem";
+      note.style.color = "#58645c";
+      sauceGrid?.after(note);
+    } else {
+      // Sauces are only offered for steak boxes and pizzas.
+      sauceLabel.remove();
+      sauceGrid?.remove();
+      servingLabel?.remove();
+      servingSelect?.remove();
+      controls.sauces = [];
+    }
+  }
+
+  openEditor = function (item) {
+    originalOpenEditor(item);
+
+    const fields = document.getElementById("editFields");
+    const controls = active.controls;
+    const isSteak = item.categoryId === "steak-meals";
+    const isPizza = item.categoryId === "pizzas";
+
+    if (!isSteak) {
+      removeSauceControls(fields, controls, isPizza);
+    }
+
+    if (!isPizza) return;
+
+    controls.pizzaIncluded = [];
+    controls.pizzaExtras = [];
+
+    const section = document.createElement("div");
+
+    const isPioneer =
+      item.baseName?.toLowerCase().includes("pioneer") ||
+      item.name.toLowerCase().includes("pioneer");
+
+    if (isPioneer) {
+      section.append(
+        heading("Choose exactly 3 included toppings"),
+        toppingGroup(
+          STANDARD_TOPPINGS,
+          0,
+          controls.pizzaIncluded
+        )
+      );
+    }
+
+    section.append(
+      heading("Extra toppings (optional)"),
+      toppingGroup(
+        STANDARD_TOPPINGS,
+        75,
+        controls.pizzaExtras
+      ),
+      toppingGroup(
+        STEAK_TOPPINGS,
+        150,
+        controls.pizzaExtras
+      )
+    );
+
+    // Place pizza toppings before the special instructions.
+    const notes = controls.notes;
+    const notesLabel = notes?.previousElementSibling;
+
+    if (notesLabel) {
+      fields.insertBefore(section, notesLabel);
+    } else {
+      fields.append(section);
+    }
+  };
+
+  addToBasket = function () {
+    if (!active) return;
+
+    const item = active.item;
+    const controls = active.controls;
+    const isPizza = item.categoryId === "pizzas";
+
+    let included = [];
+    let extras = [];
+
+    if (isPizza) {
+      included = (controls.pizzaIncluded || [])
+        .filter(t => t.input.checked)
+        .map(t => t.name);
+
+      const isPioneer =
+        item.baseName?.toLowerCase().includes("pioneer") ||
+        item.name.toLowerCase().includes("pioneer");
+
+      if (isPioneer && included.length !== 3) {
+        alert("Please choose exactly 3 included Pioneer toppings.");
+        return;
+      }
+
+      extras = (controls.pizzaExtras || [])
+        .filter(t => t.input.checked)
+        .map(t => ({ name: t.name, price: t.price }));
+
+      if (controls.placement) {
+        controls.placement.value = "separate";
+      }
+    }
+
+    const oldLength = basket.length;
+
+    // Use the existing working basket logic first.
+    originalAddToBasket();
+
+    if (!isPizza || basket.length === oldLength) return;
+
+    const entry = basket[basket.length - 1];
+
+    entry.choices.includedToppings = included;
+    entry.choices.extraToppings = extras.map(t => t.name);
+
+    entry.unitPrice += extras.reduce(
+      (sum, topping) => sum + topping.price,
+      0
+    );
+
+    renderBasket();
+  };
+
+  renderBasket = function () {
+    originalRenderBasket();
+
+    const entries = document.querySelectorAll(
+      "#basketItems > .item"
+    );
+
+    basket.forEach((item, index) => {
+      const details = entries[index]?.querySelector("small");
+      if (!details) return;
+
+      const additions = [];
+
+      if (item.choices.includedToppings?.length) {
+        additions.push(
+          "Included toppings: " +
+          item.choices.includedToppings.join(", ")
+        );
+      }
+
+      if (item.choices.extraToppings?.length) {
+        additions.push(
+          "Extra toppings: " +
+          item.choices.extraToppings.join(", ")
+        );
+      }
+
+      if (additions.length) {
+        details.textContent +=
+          (details.textContent ? " · " : "") +
+          additions.join(" · ");
+      }
+    });
+  };
+
+  // Connect the updated functions to the existing buttons.
+  document.getElementById("addItem").onclick = addToBasket;
+})();
+</script>
+
 
 </body>
 </html>
