@@ -1,0 +1,784 @@
+
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Order Online | Chunks Steak Box</title>
+<style>
+:root{--green:#167343;--red:#c82d36;--pale:#edf7ef}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,Arial,sans-serif;color:#17231b;background:#f7faf7}
+header{background:var(--green);color:white;padding:18px}
+header a{color:white}
+main{max-width:900px;margin:auto;padding:16px}
+h1{margin:0;font-size:1.6rem}
+h2{color:var(--green)}
+.card{background:white;border:1px solid #dce7de;border-radius:12px;padding:16px;margin:12px 0}
+.item{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid #eee;padding:12px 0}
+.item:last-child{border:0}
+.item strong{display:block}
+.item small{color:#58645c}
+button{background:var(--green);color:white;border:0;border-radius:8px;padding:11px 14px;font-weight:700;cursor:pointer}
+button:disabled{background:#999;cursor:not-allowed}
+button.secondary{background:#eef5ef;color:#16492d}
+input,select,textarea{font:inherit;width:100%;padding:11px;border:1px solid #cbd8ce;border-radius:8px;background:white}
+label{display:block;margin:12px 0 5px;font-weight:650}
+.options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.check{display:flex;align-items:center;gap:8px;font-weight:400;margin:6px 0}
+.check input{width:auto}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.price{color:var(--red);font-weight:800;white-space:nowrap}
+.hidden{display:none}
+#editor{position:fixed;inset:0;background:#0008;z-index:20;overflow:auto;padding:15px}
+#editor .card{max-width:550px;margin:20px auto}
+#basketCount{font-weight:700}
+.notice{padding:13px;border-radius:8px;background:#fff3d9}
+footer{text-align:center;padding:25px;color:#536359}
+</style>
+</head>
+<body>
+<header>
+<div class="row">
+<div><h1>CHUNKS STEAK BOX</h1><small>Rochdale · Collection only</small></div>
+<a href="index.html">Home</a>
+</div>
+</header>
+
+<main>
+<div class="card">
+<h2>Order for collection</h2>
+<p>Choose your food, customise each item and review your basket.</p>
+<div class="notice">
+<strong>Ordering preview</strong>
+<p>Online checkout is being prepared. To place an order now, call
+<a href="tel:+441706560049">01706 560049</a>.</p>
+</div>
+</div>
+
+<div id="menu"><p>Loading menu...</p></div>
+
+<div class="card" id="basket">
+<h2>Your basket <span id="basketCount">(0)</span></h2>
+<div id="basketItems"><p>Your basket is empty.</p></div>
+<div class="row"><strong>Total</strong><strong id="total">£0.00</strong></div>
+<label for="customerName">Your name</label>
+<input id="customerName" autocomplete="name" placeholder="Full name">
+<label for="customerPhone">Mobile number</label>
+<input id="customerPhone" type="tel" autocomplete="tel" placeholder="Phone number">
+<label for="orderNotes">General order notes (optional)</label>
+<textarea id="orderNotes" rows="2" maxlength="500"></textarea>
+<label for="payment">Payment method</label>
+<select id="payment">
+<option value="collection">Pay on collection</option>
+
+</select>
+<div id="turnstileWidget" class="cf-turnstile" data-sitekey="0x4AAAAAAFsI7CIpGXeJO5Fd" style="margin-top:16px"></div>
+<p class="notice" id="checkoutNotice">Online checkout is not open yet. Please call the shop to order.</p>
+<button id="placeOrder" type="button" disabled style="width:100%">Place order — Pay on Collection (coming soon)</button>
+<p id="orderFeedback" role="status" aria-live="polite"></p>
+</div>
+</main>
+
+<div id="editor" class="hidden" role="dialog" aria-modal="true" aria-label="Customise food">
+<div class="card">
+<div class="row">
+<h2 id="editTitle">Customise</h2>
+<button class="secondary" id="closeEditor" type="button">Close</button>
+</div>
+<div id="editFields"></div>
+<button id="addItem" type="button" style="width:100%;margin-top:16px">Add to basket</button>
+</div>
+</div>
+
+<footer>Chunks Steak Box · 101 Halifax Road, Rochdale</footer>
+
+<script>
+"use strict";
+
+const SIDES=["Chips","Rice","Creamy mash","Mac and cheese"];
+const SAUCES=[
+"Medium chilli","Hot chilli","Mayo","Garlic Mayo",
+"Peri Mayo","Burger sauce","Ketchup","Yoghurt"
+];
+
+const money=p=>(p/100).toLocaleString("en-GB",{
+style:"currency",currency:"GBP"
+});
+
+const menu=[];
+const basket=[];
+let active=null;
+
+const el=id=>document.getElementById(id);
+
+function parsePrice(s){
+const n=Number(s.replace(/[£,\s]/g,""));
+return Number.isFinite(n)?Math.round(n*100):NaN;
+}
+
+async function loadMenu(){
+try{
+const response=await fetch("index.html",{cache:"no-store"});
+if(!response.ok)throw Error("Menu unavailable");
+const html=await response.text();
+const doc=new DOMParser().parseFromString(html,"text/html");
+const sections=doc.querySelectorAll(".menu-section");
+if(!sections.length)throw Error("No menu found");
+
+sections.forEach(section=>{
+const category=section.querySelector("h3")?.textContent.trim()||"Menu";
+const categoryId=section.id;
+section.querySelectorAll(".menu-line").forEach(line=>{
+const name=line.querySelector("span")?.textContent.trim();
+const priceText=line.querySelector("b")?.textContent.trim();
+if(!name||!priceText)return;
+
+const prices=priceText.split("/").map(parsePrice);
+if(prices.some(p=>!Number.isFinite(p)||p<0))return;
+
+if(categoryId==="pizzas"&&prices.length===2){
+["9-inch","12-inch"].forEach((size,i)=>{
+menu.push({
+id:categoryId+"-"+menu.length,
+name:name+" ("+size+")",
+baseName:name,category,categoryId,
+price:prices[i],size
+});
+});
+}else if(prices.length===1){
+menu.push({
+id:categoryId+"-"+menu.length,
+name,category,categoryId,price:prices[0]
+});
+}
+});
+});
+
+renderMenu();
+}catch(err){
+el("menu").innerHTML="";
+const p=document.createElement("p");
+p.textContent="Could not load the menu. Please refresh or call the shop.";
+el("menu").append(p);
+console.error(err);
+}
+}
+
+function renderMenu(){
+const root=el("menu");
+root.replaceChildren();
+const categories=[...new Set(menu.map(m=>m.category))];
+categories.forEach(category=>{
+const card=document.createElement("section");
+card.className="card";
+const heading=document.createElement("h2");
+heading.textContent=category;
+card.append(heading);
+menu.filter(m=>m.category===category).forEach(item=>{
+const line=document.createElement("div");
+line.className="item";
+const info=document.createElement("div");
+const title=document.createElement("strong");
+title.textContent=item.name;
+const price=document.createElement("span");
+price.className="price";
+price.textContent=money(item.price);
+info.append(title,price);
+const btn=document.createElement("button");
+btn.textContent="Add +";
+btn.onclick=()=>openEditor(item);
+line.append(info,btn);
+card.append(line);
+});
+root.append(card);
+});
+}
+
+function makeLabel(text){
+const label=document.createElement("label");
+label.textContent=text;
+return label;
+}
+
+function makeSelect(options,initial){
+const select=document.createElement("select");
+options.forEach(([value,text])=>{
+const option=document.createElement("option");
+option.value=value;
+option.textContent=text;
+select.append(option);
+});
+if(initial!==undefined)select.value=initial;
+return select;
+}
+
+function makeCheck(text){
+const label=document.createElement("label");
+label.className="check";
+const input=document.createElement("input");
+input.type="checkbox";
+label.append(input,document.createTextNode(text));
+return {label,input};
+}
+
+function openEditor(item){
+active={item,controls:{}};
+el("editTitle").textContent=item.name;
+const fields=el("editFields");
+fields.replaceChildren();
+
+if(item.categoryId==="steak-meals"){
+const mode=makeSelect([
+["normal","Meal with side and salad"],
+["solo","Go solo (-£1.00)"]
+]);
+fields.append(makeLabel("Meal option"),mode);
+active.controls.mode=mode;
+
+const sideMode=makeSelect([
+["single","One side"],
+["half","Half & half"]
+]);
+const first=makeSelect(SIDES.map(s=>[s,s]));
+const second=makeSelect(SIDES.map(s=>[s,s]),"Rice");
+const sideBox=document.createElement("div");
+sideBox.append(makeLabel("Side option"),sideMode,
+makeLabel("First side"),first,
+makeLabel("Second side"),second);
+fields.append(sideBox);
+active.controls.sideMode=sideMode;
+active.controls.first=first;
+active.controls.second=second;
+
+function updateSides(){
+sideBox.style.display=mode.value==="solo"?"none":"block";
+second.previousElementSibling.style.display=
+second.style.display=sideMode.value==="half"?"block":"none";
+}
+mode.onchange=updateSides;
+sideMode.onchange=updateSides;
+updateSides();
+
+const egg=makeCheck("Add fried egg (+£1.00)");
+const large=makeCheck("Go large (+£2.95)");
+fields.append(egg.label,large.label);
+active.controls.egg=egg.input;
+active.controls.large=large.input;
+}
+
+if(["burgers","twisters"].includes(item.categoryId)){
+const solo=makeCheck("Go solo (-£1.00)");
+fields.append(solo.label);
+active.controls.solo=solo.input;
+}
+
+if(item.categoryId==="kebabs"){
+const bread=makeSelect([
+["Naan","Naan"],["Pitta","Pitta"]
+]);
+fields.append(makeLabel("Bread choice"),bread);
+active.controls.bread=bread;
+}
+
+const sauceTitle=makeLabel("Sauces (select as many as you like)");
+fields.append(sauceTitle);
+const sauceGrid=document.createElement("div");
+sauceGrid.className="options";
+active.controls.sauces=[];
+SAUCES.forEach(sauce=>{
+const check=makeCheck(sauce);
+sauceGrid.append(check.label);
+active.controls.sauces.push({name:sauce,input:check.input});
+});
+fields.append(sauceGrid);
+
+const placement=makeSelect([
+["on_food","On food"],
+["separate","Separate pots"]
+]);
+fields.append(makeLabel("Sauce serving"),placement);
+active.controls.placement=placement;
+
+const notes=document.createElement("textarea");
+notes.rows=3;
+notes.maxLength=300;
+notes.placeholder="e.g. No onions, extra well done";
+fields.append(makeLabel("Special instructions for this item"),notes);
+active.controls.notes=notes;
+
+const quantity=document.createElement("input");
+quantity.type="number";
+quantity.min="1";
+quantity.max="20";
+quantity.value="1";
+fields.append(makeLabel("Quantity"),quantity);
+active.controls.quantity=quantity;
+
+el("editor").classList.remove("hidden");
+}
+
+function addToBasket(){
+if(!active)return;
+const {item,controls:c}=active;
+const quantity=Number(c.quantity.value);
+if(!Number.isInteger(quantity)||quantity<1||quantity>20){
+alert("Choose a quantity between 1 and 20.");
+return;
+}
+
+let unitPrice=item.price;
+const choices={};
+
+if(c.mode){
+choices.meal=c.mode.value;
+if(c.mode.value==="solo")unitPrice-=100;
+else{
+choices.side=c.sideMode.value==="half"
+?"Half "+c.first.value+" / Half "+c.second.value
+:c.first.value;
+}
+if(c.egg.checked){choices.friedEgg=true;unitPrice+=100;}
+if(c.large.checked){choices.large=true;unitPrice+=295;}
+}
+if(c.solo?.checked){choices.solo=true;unitPrice-=100;}
+if(c.bread)choices.bread=c.bread.value;
+
+choices.sauces=c.sauces
+.filter(s=>s.input.checked).map(s=>s.name);
+choices.sauceServing=choices.sauces.length
+?(c.placement.value==="separate"?"Separate pots":"On food")
+:"No sauce";
+choices.instructions=c.notes.value.trim();
+
+basket.push({
+name:item.name,id:item.id,
+quantity,unitPrice,choices
+});
+active=null;
+el("editor").classList.add("hidden");
+renderBasket();
+}
+
+function renderBasket(){
+const root=el("basketItems");
+root.replaceChildren();
+if(!basket.length){
+const p=document.createElement("p");
+p.textContent="Your basket is empty.";
+root.append(p);
+}
+basket.forEach((entry,index)=>{
+const card=document.createElement("div");
+card.className="item";
+const info=document.createElement("div");
+const name=document.createElement("strong");
+name.textContent=entry.quantity+" × "+entry.name;
+const details=document.createElement("small");
+const parts=[];
+const c=entry.choices;
+if(c.meal)parts.push(c.meal==="solo"?"Solo":c.side);
+if(c.friedEgg)parts.push("Fried egg");
+if(c.large)parts.push("Large");
+if(c.solo)parts.push("Solo");
+if(c.bread)parts.push(c.bread);
+if(c.sauces.length)parts.push(c.sauces.join(", ")+" — "+c.sauceServing);
+if(c.instructions)parts.push("Note: "+c.instructions);
+details.textContent=parts.join(" · ");
+const price=document.createElement("div");
+price.textContent=money(entry.unitPrice*entry.quantity);
+price.className="price";
+const remove=document.createElement("button");
+remove.className="secondary";
+remove.textContent="Remove";
+remove.onclick=()=>{basket.splice(index,1);renderBasket();};
+info.append(name,details);
+card.append(info,price,remove);
+root.append(card);
+});
+el("basketCount").textContent="("+basket.reduce((s,i)=>s+i.quantity,0)+")";
+el("total").textContent=money(
+basket.reduce((s,i)=>s+i.unitPrice*i.quantity,0)
+);
+}
+
+el("closeEditor").onclick=()=>{
+el("editor").classList.add("hidden");
+active=null;
+};
+el("addItem").onclick=addToBasket;
+loadMenu();
+</script>
+  
+<style>
+#floatingBasket {
+  position: fixed;
+  bottom: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 15;
+  background: #167343;
+  color: white;
+  border: 2px solid white;
+  border-radius: 12px;
+  padding: 15px;
+  box-shadow: 0 5px 20px #0004;
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 800;
+  cursor: pointer;
+}
+body { padding-bottom: 85px; }
+</style>
+
+<button id="floatingBasket" type="button">
+  <span id="floatingBasketCount">View basket</span>
+  <span id="floatingBasketTotal">£0.00</span>
+</button>
+
+<script>
+(function () {
+  const button = document.getElementById("floatingBasket");
+  const count = document.getElementById("floatingBasketCount");
+  const total = document.getElementById("floatingBasketTotal");
+
+  button.addEventListener("click", function () {
+    document.getElementById("basket")
+      .scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  function update() {
+    const basketCount = document.getElementById("basketCount").textContent;
+    const basketTotal = document.getElementById("total").textContent;
+
+    button.style.display = basketCount === "(0)" ? "none" : "flex";
+    count.textContent = "🛒 View basket " + basketCount;
+    total.textContent = basketTotal;
+  }
+
+  const observer = new MutationObserver(update);
+  observer.observe(document.getElementById("basketCount"), {
+    childList: true,
+    characterData: true,
+    subtree: true
+  });
+  update();
+})();
+</script>
+  
+<script>
+/* Chunks Steak Box — pizza toppings and sauce rules */
+(function () {
+  const STANDARD_TOPPINGS = [
+    "Tomatoes", "Mixed peppers", "Sweetcorn",
+    "Red onion", "Pepperoni", "Chicken tikka",
+    "Keema", "Donner", "Jalapeño",
+    "Pineapple", "Olive", "Green chilli", "Mushrooms"
+  ];
+
+  const STEAK_TOPPINGS = ["Chicken steak", "Beef steak"];
+
+  const originalOpenEditor = openEditor;
+  const originalAddToBasket = addToBasket;
+  const originalRenderBasket = renderBasket;
+
+  function heading(text) {
+    const h = document.createElement("h3");
+    h.textContent = text;
+    return h;
+  }
+
+  function toppingGroup(names, price, target) {
+    const group = document.createElement("div");
+    group.className = "options";
+
+    names.forEach(name => {
+      const label = document.createElement("label");
+      label.className = "check";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+
+      label.append(
+        checkbox,
+        document.createTextNode(
+          name + (price ? " (+£" + (price / 100).toFixed(2) + ")" : "")
+        )
+      );
+
+      group.append(label);
+      target.push({ name, price, input: checkbox });
+    });
+
+    return group;
+  }
+
+  function removeSauceControls(fields, controls, isPizza) {
+    const labels = Array.from(fields.children);
+    const sauceLabel = labels.find(node =>
+      node.tagName === "LABEL" &&
+      node.textContent.includes("Sauces (select")
+    );
+
+    if (!sauceLabel) return;
+
+    const sauceGrid = sauceLabel.nextElementSibling;
+    const servingLabel = Array.from(fields.children).find(node =>
+      node.tagName === "LABEL" &&
+      node.textContent === "Sauce serving"
+    );
+    const servingSelect = servingLabel?.nextElementSibling;
+
+    if (isPizza) {
+      // Keep sauce checkboxes but force separate pots.
+      if (controls.placement) controls.placement.value = "separate";
+      servingLabel?.remove();
+      servingSelect?.remove();
+
+      const note = document.createElement("p");
+      note.textContent = "All pizza sauces are served in separate pots.";
+      note.style.fontSize = ".9rem";
+      note.style.color = "#58645c";
+      sauceGrid?.after(note);
+    } else {
+      // Sauces are only offered for steak boxes and pizzas.
+      sauceLabel.remove();
+      sauceGrid?.remove();
+      servingLabel?.remove();
+      servingSelect?.remove();
+      controls.sauces = [];
+    }
+  }
+
+  openEditor = function (item) {
+    originalOpenEditor(item);
+
+    const fields = document.getElementById("editFields");
+    const controls = active.controls;
+    const isSteak = item.categoryId === "steak-meals";
+    const isPizza = item.categoryId === "pizzas";
+
+    if (!isSteak) {
+      removeSauceControls(fields, controls, isPizza);
+    }
+
+    if (!isPizza) return;
+
+    controls.pizzaIncluded = [];
+    controls.pizzaExtras = [];
+
+    const section = document.createElement("div");
+
+    const isPioneer =
+      item.baseName?.toLowerCase().includes("pioneer") ||
+      item.name.toLowerCase().includes("pioneer");
+
+    if (isPioneer) {
+      section.append(
+        heading("Choose exactly 3 included toppings"),
+        toppingGroup(
+          STANDARD_TOPPINGS,
+          0,
+          controls.pizzaIncluded
+        )
+      );
+    }
+
+    section.append(
+      heading("Extra toppings (optional)"),
+      toppingGroup(
+        STANDARD_TOPPINGS,
+        75,
+        controls.pizzaExtras
+      ),
+      toppingGroup(
+        STEAK_TOPPINGS,
+        150,
+        controls.pizzaExtras
+      )
+    );
+
+    // Place pizza toppings before the special instructions.
+    const notes = controls.notes;
+    const notesLabel = notes?.previousElementSibling;
+
+    if (notesLabel) {
+      fields.insertBefore(section, notesLabel);
+    } else {
+      fields.append(section);
+    }
+  };
+
+  addToBasket = function () {
+    if (!active) return;
+
+    const item = active.item;
+    const controls = active.controls;
+    const isPizza = item.categoryId === "pizzas";
+
+    let included = [];
+    let extras = [];
+
+    if (isPizza) {
+      included = (controls.pizzaIncluded || [])
+        .filter(t => t.input.checked)
+        .map(t => t.name);
+
+      const isPioneer =
+        item.baseName?.toLowerCase().includes("pioneer") ||
+        item.name.toLowerCase().includes("pioneer");
+
+      if (isPioneer && included.length !== 3) {
+        alert("Please choose exactly 3 included Pioneer toppings.");
+        return;
+      }
+
+      extras = (controls.pizzaExtras || [])
+        .filter(t => t.input.checked)
+        .map(t => ({ name: t.name, price: t.price }));
+
+      if (controls.placement) {
+        controls.placement.value = "separate";
+      }
+    }
+
+    const oldLength = basket.length;
+
+    // Use the existing working basket logic first.
+    originalAddToBasket();
+
+    if (!isPizza || basket.length === oldLength) return;
+
+    const entry = basket[basket.length - 1];
+
+    entry.choices.includedToppings = included;
+    entry.choices.extraToppings = extras.map(t => t.name);
+
+    entry.unitPrice += extras.reduce(
+      (sum, topping) => sum + topping.price,
+      0
+    );
+
+    renderBasket();
+  };
+
+  renderBasket = function () {
+    originalRenderBasket();
+
+    const entries = document.querySelectorAll(
+      "#basketItems > .item"
+    );
+
+    basket.forEach((item, index) => {
+      const details = entries[index]?.querySelector("small");
+      if (!details) return;
+
+      const additions = [];
+
+      if (item.choices.includedToppings?.length) {
+        additions.push(
+          "Included toppings: " +
+          item.choices.includedToppings.join(", ")
+        );
+      }
+
+      if (item.choices.extraToppings?.length) {
+        additions.push(
+          "Extra toppings: " +
+          item.choices.extraToppings.join(", ")
+        );
+      }
+
+      if (additions.length) {
+        details.textContent +=
+          (details.textContent ? " · " : "") +
+          additions.join(" · ");
+      }
+    });
+  };
+
+  // Connect the updated functions to the existing buttons.
+  document.getElementById("addItem").onclick = addToBasket;
+})();
+</script>
+
+
+
+<script>
+/* Checkout integration prepared but intentionally disabled until public endpoint security is complete. */
+(function () {
+  "use strict";
+  const CHECKOUT_ENABLED = false;
+  const FUNCTION_URL = "https://qyhzbfdkjvjjbnkceowi.supabase.co/functions/v1/submit-order-v3";
+  // A PUBLIC anon/publishable key is required if JWT verification remains enabled.
+  // Never put a service-role or secret key in this file.
+  const PUBLIC_SUPABASE_KEY = "";
+  const button = document.getElementById("placeOrder");
+  const feedback = document.getElementById("orderFeedback");
+  const notice = document.getElementById("checkoutNotice");
+  if (!CHECKOUT_ENABLED) return;
+  button.disabled = false;
+  button.textContent = "Place order — Pay on Collection";
+  notice.textContent = "Pay at the shop when you collect. No online payment is taken.";
+  let submitting = false;
+  button.addEventListener("click", async function () {
+    if (submitting) return;
+    const customer_name = document.getElementById("customerName").value.trim();
+    const customer_phone = document.getElementById("customerPhone").value.trim();
+    const notes = document.getElementById("orderNotes").value.trim();
+    if (!basket.length) { feedback.textContent = "Please add something to your basket."; return; }
+    if (!customer_name || !customer_phone) { feedback.textContent = "Please enter your name and phone number."; return; }
+    if (!PUBLIC_SUPABASE_KEY) { feedback.textContent = "Checkout is not configured yet."; return; }
+    const turnstile_token = window.turnstile?.getResponse();
+    if (!turnstile_token) { feedback.textContent = "Please complete the security check."; return; }
+    if (!confirm("Place your order for collection? You'll pay at the shop.")) return;
+    submitting = true;
+    button.disabled = true;
+    feedback.textContent = "Sending your order…";
+    try {
+      const response = await fetch(FUNCTION_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": PUBLIC_SUPABASE_KEY,
+          "Authorization": "Bearer " + PUBLIC_SUPABASE_KEY
+        },
+        body: JSON.stringify({
+          customer_name,
+          customer_phone,
+          notes,
+          turnstile_token,
+          items: basket.map(({ name, quantity, choices }) => ({ name, quantity, choices }))
+        })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success || result.saved !== true || !result.order_id) {
+        throw new Error(result.error || "Your order could not be confirmed.");
+      }
+      const orderId = result.order_id;
+      const total = Number(result.total_pence);
+      basket.splice(0, basket.length);
+      renderBasket();
+      document.getElementById("customerName").value = "";
+      document.getElementById("customerPhone").value = "";
+      document.getElementById("orderNotes").value = "";
+      feedback.textContent = "Order confirmed! Reference: " + orderId +
+        (Number.isFinite(total) ? ". Total: " + money(total) : "") +
+        ". Please pay when you collect.";
+      feedback.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (error) {
+      feedback.textContent = "Order not confirmed: " + (error.message || "Please call the shop.") +
+        " If you are unsure whether it went through, call the shop before trying again.";
+    } finally {
+      window.turnstile?.reset();
+      submitting = false;
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</body>
+</html>
